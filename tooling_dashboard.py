@@ -29,6 +29,7 @@ st.markdown("""
         font-size: 1rem;
         color: #6c757d;
         font-weight: 600;
+        margin-bottom: 5px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -82,7 +83,7 @@ def process_uploaded_files(uploaded_files):
         # Concatenate all files
         master_df = pd.concat(dfs, ignore_index=True)
         
-        # Drop empty rows (e.g., trailing commas or blank lines)
+        # Drop empty rows
         master_df = master_df.dropna(subset=['Tooling ID', 'Plant Name'], how='all')
 
         # Clean numerical columns
@@ -97,7 +98,6 @@ def process_uploaded_files(uploaded_files):
         
         for col in num_cols:
             if col in master_df.columns:
-                # Remove commas and convert to float
                 master_df[col] = pd.to_numeric(
                     master_df[col].astype(str).str.replace(',', ''), 
                     errors='coerce'
@@ -108,18 +108,17 @@ def process_uploaded_files(uploaded_files):
 
 
 def main():
-    st.title("⚙️ PACCAR Tooling Snapshot Dashboard")
-    st.markdown("Upload your tooling data extracts to view aggregated KPIs and filter across facilities.")
+    st.title("⚙️ PACCAR OEM Asset Management & Production Dashboard")
+    st.markdown("Top-level visibility into tooling lifecycles, supplier sensor compliance, and highest-volume production assets.")
 
     # --- SIDEBAR & FILE UPLOAD ---
     with st.sidebar:
-        st.header("Data Import")
+        st.header("1. Data Import")
         uploaded_files = st.file_uploader(
             "Upload Tooling Data (CSV, XLS, XLSX)", 
             type=["csv", "xls", "xlsx"], 
             accept_multiple_files=True
         )
-        
         st.divider()
 
     # Load Data
@@ -127,26 +126,31 @@ def main():
         df = process_uploaded_files(uploaded_files)
 
     if df.empty:
-        st.info("👈 Please upload one or more tooling data files from the sidebar to generate the dashboard.")
+        st.info("👈 Please upload your tooling data extracts from the sidebar to populate the dashboard.")
         return
 
-    # --- SIDEBAR FILTERS (Excel-like functionality) ---
-    st.sidebar.header("Data Filters")
+    # --- SIDEBAR FILTERS ---
+    st.sidebar.header("2. Segment & Filter")
     
-    # 1. Categorical Filters
+    # Supplier/Plant Filter
     plant_options = sorted(df["Plant Name"].dropna().unique().tolist())
-    selected_plants = st.sidebar.multiselect("🏭 Plant Name", plant_options, default=plant_options)
+    selected_plants = st.sidebar.multiselect("🏭 Supplier / Plant Location", plant_options, default=plant_options)
     
+    # Part Name / Tool Type Filter
+    part_options = sorted(df["Part Name"].dropna().astype(str).unique().tolist())
+    selected_parts = st.sidebar.multiselect("🗜️ Part / Tool Type", part_options, placeholder="Select to filter (defaults to All)")
+    if not selected_parts:
+        selected_parts = part_options
+
+    # Status Filters
     eol_options = sorted(df["EOL Status"].dropna().unique().tolist())
     selected_eol = st.sidebar.multiselect("⚠️ EOL Status", eol_options, default=eol_options)
     
     sensor_options = sorted(df["Sensor Status"].dropna().unique().tolist())
     selected_sensors = st.sidebar.multiselect("📡 Sensor Status", sensor_options, default=sensor_options)
 
-    # 2. Numerical Range Filters
+    # Life Consumed Filter
     min_life, max_life = float(df["Life Consumed %"].min()), float(df["Life Consumed %"].max())
-    
-    # Safety fallback if min and max are the same
     if min_life == max_life:
         min_life, max_life = 0.0, max_life + 1.0
 
@@ -158,26 +162,24 @@ def main():
         step=0.1
     )
 
-    # Apply all filters
+    # Apply Filters
     filtered_df = df[
         (df["Plant Name"].isin(selected_plants)) &
+        (df["Part Name"].astype(str).isin(selected_parts)) &
         (df["EOL Status"].isin(selected_eol)) &
         (df["Sensor Status"].isin(selected_sensors)) &
         (df["Life Consumed %"] >= life_consumed_range[0]) &
         (df["Life Consumed %"] <= life_consumed_range[1])
     ]
 
-    # --- KPI SNAPSHOT (TOP LEVEL) ---
-    st.subheader("Top Level Snapshot")
-    
+    # --- KPI SNAPSHOT ---
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     
     with kpi1:
-        total_tools = len(filtered_df)
         st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-label">Total Tools Tracked</div>
-                <div class="metric-value">{total_tools:,}</div>
+                <div class="metric-label">Total Tools in Scope</div>
+                <div class="metric-value">{len(filtered_df):,}</div>
             </div>
         """, unsafe_allow_html=True)
         
@@ -185,7 +187,7 @@ def main():
         past_eol = len(filtered_df[filtered_df["EOL Status"] == "Past EOL"])
         st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-label">Tools Past EOL</div>
+                <div class="metric-label">Assets Past EOL</div>
                 <div class="metric-value" style="color:#d62728;">{past_eol:,}</div>
             </div>
         """, unsafe_allow_html=True)
@@ -194,111 +196,132 @@ def main():
         total_shots = int(filtered_df["Week 27 Shot Count"].sum())
         st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-label">Wk 27 Total Shots</div>
+                <div class="metric-label">Total Weekly Production (Shots)</div>
                 <div class="metric-value">{total_shots:,}</div>
             </div>
         """, unsafe_allow_html=True)
         
     with kpi4:
-        total_uptime = round(filtered_df["Week 27 Uptime (hrs)"].sum(), 1)
+        # Calculate overall sensor connectivity %
+        online_count = len(filtered_df[filtered_df["Sensor Status"] == "Online"])
+        connectivity_rate = (online_count / len(filtered_df) * 100) if len(filtered_df) > 0 else 0
+        color = "#2ca02c" if connectivity_rate >= 90 else "#ff7f0e" if connectivity_rate >= 75 else "#d62728"
         st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-label">Wk 27 Total Uptime (hrs)</div>
-                <div class="metric-value">{total_uptime:,.1f}</div>
+                <div class="metric-label">Global Sensor Online Rate</div>
+                <div class="metric-value" style="color:{color};">{connectivity_rate:.1f}%</div>
             </div>
         """, unsafe_allow_html=True)
 
-    st.write("") # Spacer
+    st.markdown("---")
 
-    # --- CHARTS AND VISUALIZATIONS ---
+    # --- SECTION 1: ASSET HEALTH & COMPLIANCE ---
+    st.subheader("Asset Health & Supplier Compliance")
     col1, col2 = st.columns(2)
 
     with col1:
-        # Distribution of tools by plant
-        plant_counts = filtered_df["Plant Name"].value_counts().reset_index()
-        plant_counts.columns = ["Plant Name", "Tool Count"]
-        fig_plants = px.bar(
-            plant_counts, 
-            x="Plant Name", 
-            y="Tool Count",
-            title="Tool Inventory by Plant",
-            color="Plant Name",
-            text_auto=True
-        )
-        fig_plants.update_layout(showlegend=False, xaxis_title="", yaxis_title="Number of Tools")
-        st.plotly_chart(fig_plants, use_container_width=True)
-
-    with col2:
-        # EOL Status Breakdown
+        # EOL Status Breakdown (Donut)
         eol_counts = filtered_df["EOL Status"].value_counts().reset_index()
         eol_counts.columns = ["EOL Status", "Count"]
-        # Standardize colors if possible
         color_map = {"Healthy": "#2ca02c", "Warning": "#ff7f0e", "Past EOL": "#d62728"}
+        
         fig_eol = px.pie(
-            eol_counts, 
-            names="EOL Status", 
-            values="Count",
-            title="End of Life (EOL) Status Breakdown",
-            color="EOL Status",
-            color_discrete_map=color_map,
-            hole=0.4
+            eol_counts, names="EOL Status", values="Count",
+            title="Overall Asset Health (End of Life Status)",
+            color="EOL Status", color_discrete_map=color_map, hole=0.4
         )
         fig_eol.update_traces(textposition='inside', textinfo='percent+label')
         st.plotly_chart(fig_eol, use_container_width=True)
 
+    with col2:
+        # Sensor Online Rate per Supplier (Bar)
+        if len(filtered_df) > 0:
+            sensor_rate = filtered_df.groupby('Plant Name')['Sensor Status'].apply(
+                lambda x: (x == 'Online').mean() * 100
+            ).reset_index()
+            sensor_rate.columns = ['Supplier / Plant', 'Online Rate (%)']
+            sensor_rate = sensor_rate.sort_values('Online Rate (%)', ascending=True)
 
-    st.subheader("Asset Utilization vs. Lifecycle")
-    # Scatter plot: Accumulated Shots vs Rated Life
-    fig_scatter = px.scatter(
-        filtered_df, 
-        x="Accumulated Shots (life-to-date)", 
-        y="Rated Life (shots)",
-        color="EOL Status",
-        hover_data=["Tooling ID", "Part Name", "Plant Name", "Life Consumed %"],
-        title="Accumulated Shots vs. Rated Life",
-        color_discrete_map={"Healthy": "#2ca02c", "Warning": "#ff7f0e", "Past EOL": "#d62728"}
-    )
-    # Add a 1:1 parity line to visualize 100% life consumed boundary
-    max_val = max(filtered_df["Accumulated Shots (life-to-date)"].max(), filtered_df["Rated Life (shots)"].max())
-    fig_scatter.add_shape(
-        type="line", line=dict(dash='dash', color='gray'),
-        x0=0, y0=0, x1=max_val, y1=max_val
-    )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+            fig_sensor = px.bar(
+                sensor_rate, x='Online Rate (%)', y='Supplier / Plant', 
+                orientation='h', title="Sensor Connectivity Rate by Supplier",
+                text_auto='.1f'
+            )
+            fig_sensor.update_layout(xaxis_range=[0, 100], xaxis_title="Online Rate (%)", yaxis_title="")
+            # Highlight low connectivity in red
+            fig_sensor.update_traces(marker_color=['#d62728' if val < 85 else '#1f77b4' for val in sensor_rate['Online Rate (%)']])
+            st.plotly_chart(fig_sensor, use_container_width=True)
 
-    # --- RAW DATA TABLE ---
-    st.subheader("Detailed Tooling View")
-    st.markdown("Filter, sort, and search this interactive table exactly like Excel.")
+
+    st.markdown("---")
+
+    # --- SECTION 2: PRODUCTION METRICS & UTILIZATION ---
+    st.subheader("Production Volume & Asset Utilization (Week 27)")
+    col3, col4 = st.columns(2)
+
+    with col3:
+        # Top 10 Producing Tools (Bar)
+        top_producers = filtered_df.nlargest(10, 'Week 27 Shot Count')
+        if not top_producers.empty:
+            # Create a label combining ID and Part Name for clarity
+            top_producers['Label'] = top_producers['Tooling ID'].astype(str) + " (" + top_producers['Plant Name'] + ")"
+            
+            fig_top_shots = px.bar(
+                top_producers, x='Week 27 Shot Count', y='Label', 
+                orientation='h', title="Highest Volume Assets (Top 10 by Shot Count)",
+                hover_data=["Part Name", "Life Consumed %"],
+                color='Week 27 Shot Count', color_continuous_scale='Blues'
+            )
+            fig_top_shots.update_layout(yaxis={'categoryorder':'total ascending'}, yaxis_title="")
+            st.plotly_chart(fig_top_shots, use_container_width=True)
+        else:
+            st.info("No production data available for current filters.")
+
+    with col4:
+        # Top 10 Uptime Tools (Bar) - Shows production hours vs idle
+        top_uptime = filtered_df.nlargest(10, 'Week 27 Uptime (hrs)')
+        if not top_uptime.empty:
+            top_uptime['Label'] = top_uptime['Tooling ID'].astype(str) + " (" + top_uptime['Plant Name'] + ")"
+            
+            fig_top_uptime = px.bar(
+                top_uptime, x='Week 27 Uptime (hrs)', y='Label', 
+                orientation='h', title="Highest Utilized Assets (Top 10 by Production Hours)",
+                hover_data=["Part Name", "Week 27 Shot Count"],
+                color='Week 27 Uptime (hrs)', color_continuous_scale='Teal'
+            )
+            fig_top_uptime.update_layout(yaxis={'categoryorder':'total ascending'}, yaxis_title="")
+            # Adding a line for max possible weekly hours (168) as reference for idle time
+            fig_top_uptime.add_vline(x=168, line_dash="dash", line_color="red", annotation_text="Max 168 Hrs/Wk")
+            st.plotly_chart(fig_top_uptime, use_container_width=True)
+        else:
+            st.info("No uptime data available for current filters.")
+
+
+    # --- RAW DATA TABLE (ITEMIZED BREAKDOWN) ---
+    st.markdown("---")
+    st.subheader("Itemized Asset Breakdown")
+    st.markdown("Filter, sort, and search specific tools. Columns are customizable and sortable.")
     
-    # Display dataframe with built-in Streamlit sorting and filtering tools
     st.dataframe(
         filtered_df,
         use_container_width=True,
         hide_index=True,
         height=400,
         column_config={
-            "Life Consumed %": st.column_config.NumberColumn(
-                "Life Consumed %",
-                help="Percentage of rated life consumed",
-                format="%.2f%%"
-            ),
-            "Accumulated Shots (life-to-date)": st.column_config.NumberColumn(
-                "Accumulated Shots",
-                format="%d"
-            ),
-            "Rated Life (shots)": st.column_config.NumberColumn(
-                "Rated Life",
-                format="%d"
-            )
+            "Life Consumed %": st.column_config.NumberColumn("Life Consumed %", format="%.2f%%"),
+            "Accumulated Shots (life-to-date)": st.column_config.NumberColumn("Accumulated Shots", format="%d"),
+            "Rated Life (shots)": st.column_config.NumberColumn("Rated Life", format="%d"),
+            "Week 27 Shot Count": st.column_config.NumberColumn("Wk 27 Shots", format="%d"),
+            "Week 27 Uptime (hrs)": st.column_config.NumberColumn("Wk 27 Uptime", format="%.1f hrs")
         }
     )
 
-    # Optional CSV Export of filtered data
+    # Export functionality
     csv = filtered_df.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="📥 Download Filtered Data as CSV",
+        label="📥 Download Itemized Data (CSV)",
         data=csv,
-        file_name='filtered_tooling_data.csv',
+        file_name='paccar_asset_management_export.csv',
         mime='text/csv',
     )
 
