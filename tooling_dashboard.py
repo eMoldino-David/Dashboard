@@ -36,7 +36,7 @@ st.markdown("""
 @st.cache_data(show_spinner=False)
 def process_uploaded_files(uploaded_files):
     """
-    Reads multiple CSV files, identifies the correct header row,
+    Reads multiple CSV or Excel files, identifies the correct header row,
     consolidates them, and cleans data types.
     """
     if not uploaded_files:
@@ -44,20 +44,36 @@ def process_uploaded_files(uploaded_files):
 
     dfs = []
     for file in uploaded_files:
+        file_ext = file.name.split('.')[-1].lower()
         try:
-            # Decode lines to find the actual header row
-            lines = file.getvalue().decode("utf-8").splitlines()
-            header_row = 0
-            for i, line in enumerate(lines):
-                if "Tooling ID" in line and "Plant Name" in line:
-                    header_row = i
-                    break
-            
-            # Reset pointer and read
-            file.seek(0)
-            df = pd.read_csv(file, skiprows=header_row)
-            dfs.append(df)
-            
+            if file_ext == 'csv':
+                # Decode lines to find the actual header row
+                lines = file.getvalue().decode("utf-8").splitlines()
+                header_row = 0
+                for i, line in enumerate(lines):
+                    if "Tooling ID" in line and "Plant Name" in line:
+                        header_row = i
+                        break
+                
+                # Reset pointer and read
+                file.seek(0)
+                df = pd.read_csv(file, skiprows=header_row)
+                dfs.append(df)
+            elif file_ext in ['xls', 'xlsx']:
+                # Read first few rows to find header
+                preview_df = pd.read_excel(file, nrows=20, header=None)
+                header_row = 0
+                for idx, row in preview_df.iterrows():
+                    row_str = ' '.join(row.astype(str).tolist())
+                    if "Tooling ID" in row_str and "Plant Name" in row_str:
+                        header_row = idx
+                        break
+                
+                # Reset pointer and read
+                file.seek(0)
+                df = pd.read_excel(file, skiprows=header_row)
+                dfs.append(df)
+                
         except Exception as e:
             st.error(f"Error processing {file.name}: {str(e)}")
 
@@ -92,14 +108,14 @@ def process_uploaded_files(uploaded_files):
 
 def main():
     st.title("⚙️ PACCAR Tooling Snapshot Dashboard")
-    st.markdown("Upload your tooling CSV extracts to view aggregated KPIs and filter across facilities.")
+    st.markdown("Upload your tooling data extracts to view aggregated KPIs and filter across facilities.")
 
     # --- SIDEBAR & FILE UPLOAD ---
     with st.sidebar:
         st.header("Data Import")
         uploaded_files = st.file_uploader(
-            "Upload Tooling Data (CSV)", 
-            type="csv", 
+            "Upload Tooling Data (CSV, XLS, XLSX)", 
+            type=["csv", "xls", "xlsx"], 
             accept_multiple_files=True
         )
         
@@ -110,7 +126,7 @@ def main():
         df = process_uploaded_files(uploaded_files)
 
     if df.empty:
-        st.info("👈 Please upload one or more tooling CSV files from the sidebar to generate the dashboard.")
+        st.info("👈 Please upload one or more tooling data files from the sidebar to generate the dashboard.")
         return
 
     # --- SIDEBAR FILTERS (Excel-like functionality) ---
