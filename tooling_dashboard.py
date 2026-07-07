@@ -146,6 +146,13 @@ def main():
     # --- SIDEBAR FILTERS ---
     st.sidebar.header("2. Segment & Filter")
     
+    # 0. Global Text Search
+    search_query = st.sidebar.text_input(
+        "🔍 Search Tool/Part", 
+        "", 
+        placeholder="Enter Tool ID or Part Name..."
+    )
+    
     # 1. Supplier / Plant Filter
     plant_options = sorted(df["Plant Name"].dropna().unique().tolist())
     selected_plants = st.sidebar.multiselect("🏭 Supplier / Plant Location", plant_options, default=plant_options)
@@ -182,7 +189,7 @@ def main():
         step=0.1
     )
 
-    # Apply Filters
+    # Apply Baseline Filters
     filtered_df = df[
         (df["Plant Name"].isin(selected_plants)) &
         (df["Part ID"].astype(str).isin(selected_projects)) &
@@ -192,6 +199,16 @@ def main():
         (df["Life Consumed %"] >= life_consumed_range[0]) &
         (df["Life Consumed %"] <= life_consumed_range[1])
     ]
+
+    # Apply Text Search Filter (if used)
+    if search_query:
+        search_lower = search_query.lower()
+        # Allows searching across Tooling ID, Part ID, and Part Name simultaneously
+        filtered_df = filtered_df[
+            filtered_df["Tooling ID"].fillna('').astype(str).str.lower().str.contains(search_lower) |
+            filtered_df["Part ID"].fillna('').astype(str).str.lower().str.contains(search_lower) |
+            filtered_df["Part Name"].fillna('').astype(str).str.lower().str.contains(search_lower)
+        ]
 
     # --- KPI SNAPSHOT ---
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
