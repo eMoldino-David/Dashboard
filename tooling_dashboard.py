@@ -64,7 +64,8 @@ def process_uploaded_files(uploaded_files):
                 preview_df = pd.read_excel(file, nrows=20, header=None)
                 header_row = 0
                 for idx, row in preview_df.iterrows():
-                    row_str = ' '.join(row.astype(str).tolist())
+                    # Safely convert all values to string to avoid float join errors
+                    row_str = ' '.join([str(val) for val in row.values])
                     if "Tooling ID" in row_str and "Plant Name" in row_str:
                         header_row = idx
                         break
